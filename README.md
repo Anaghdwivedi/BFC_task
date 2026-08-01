@@ -196,41 +196,24 @@ Serves the frontend chat page.
 
 ---
 
-## Phase 7 — End-to-End Test Results
+## End-to-End Tests
 
-Run the test suite (requires the server to NOT already be running):
-
-```bash
-PYTHONIOENCODING=utf-8 python run_phase7_tests.py
-```
-
-| Scenario | Result |
-|---|---|
-| Scenario 1 — "What is SIP?" (general finance question) | ✅ PASS (NO_KEY without API key) |
-| Scenario 2 — "What's the weather today?" (off-topic) | ✅ PASS (NO_KEY without API key) |
-| Scenario 3 — Loan Tenure happy path (4-turn walkthrough) | ✅ PASS |
-| Scenario 4 — EMI too low edge case | ✅ PASS |
-| Scenario 5 — Negative input rejected + recovery | ✅ PASS |
-| Scenario 6 — Full SWP walkthrough (5 turns) | ✅ PASS |
-
-**NO_KEY** means the scenario requires `GEMINI_API_KEY` to exercise the LLM path. Calculator scenarios (3–6) pass without it. Set the key and all 6 scenarios pass.
-
----
-
-## Running Unit Tests
-
-Three test suites cover all modules:
+Run the test suite (requires `GEMINI_API_KEY` to be set for LLM scenarios):
 
 ```bash
-# Calculators, LLM module, chat logic (79 tests)
-PYTHONIOENCODING=utf-8 python test_phase1_to_3.py
-
-# Session state and chat logic (98 tests)
-PYTHONIOENCODING=utf-8 python test_phase4.py
-
-# Flask routes, validation, CORS, session handling (54 tests)
-PYTHONIOENCODING=utf-8 python test_phase5.py
+PYTHONIOENCODING=utf-8 python tests/test_e2e.py
 ```
+
+| Scenario | What is tested | Result |
+|---|---|---|
+| 1 — General finance question | "What is SIP?" routed to LLM | ✅ PASS |
+| 2 — Off-topic refusal | "What's the weather today?" declined | ✅ PASS |
+| 3 — Loan Tenure happy path | Full 4-turn calculator walkthrough | ✅ PASS |
+| 4 — EMI too low edge case | Error detected, clear message returned | ✅ PASS |
+| 5 — Negative input + recovery | Bad input rejected, session continues | ✅ PASS |
+| 6 — Full SWP walkthrough | Full 5-turn calculator walkthrough | ✅ PASS |
+
+Scenarios 1 and 2 require `GEMINI_API_KEY` to reach the LLM. Scenarios 3–6 (calculators) run without an API key.
 
 ---
 
