@@ -1,10 +1,12 @@
 """Chat routing and session state logic."""
 
-from backend.calculators import (
-    calculate_loan_tenure,
-    calculate_sip,
-    calculate_swp,
-)
+import asyncio
+import os
+import sys
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
 from backend.llm import ask_llm
 
 # ── Calculator definitions ─────────────────────────────────────────────────
@@ -23,10 +25,6 @@ CALCULATORS = {
         "confirm_template": (
             "Got it — Loan ₹{P} | EMI ₹{E} | Rate {R}%. Calculating..."
         ),
-        "function": calculate_loan_tenure,
-        "call": lambda inputs: calculate_loan_tenure(
-            float(inputs["P"]), float(inputs["E"]), float(inputs["R"])
-        ),
     },
     "sip": {
         "trigger_keywords": [
@@ -41,10 +39,6 @@ CALCULATORS = {
         },
         "confirm_template": (
             "Got it — Target ₹{target} | Return {R}% | Period {years} year(s). Calculating..."
-        ),
-        "function": calculate_sip,
-        "call": lambda inputs: calculate_sip(
-            float(inputs["target"]), float(inputs["R"]), float(inputs["years"])
         ),
     },
     "swp": {
@@ -65,13 +59,6 @@ CALCULATORS = {
         "confirm_template": (
             "Got it — Corpus ₹{P} | Period {years} year(s) | Return {R}% | "
             "Withdrawal {W}/month. Calculating..."
-        ),
-        "function": calculate_swp,
-        "call": lambda inputs: calculate_swp(
-            float(inputs["P"]),
-            float(inputs["years"]),
-            float(inputs["R"]),
-            inputs["W"],
         ),
     },
 }
@@ -141,10 +128,31 @@ def _parse_numeric_input(raw):
         return None
 
 
-def _run_calculator(calc_key, inputs):
+_TOOL_NAMES = {
+    "loan_tenure": "calculate_loan_tenure",
+    "sip":         "calculate_sip",
+    "swp":         "calculate_swp",
+}
+
+
+async def _mcp_call(tool_name: str, arguments: dict) -> str:
+    """Open a stdio MCP session, call one tool, return its text result."""
+    server_params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "backend.mcp_server"],
+        env=os.environ.copy(),
+    )
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(tool_name, arguments)
+            return result.content[0].text
+
+
+def _call_via_mcp(calc_key: str, inputs: dict) -> str:
     """
-    Run the appropriate calculator function with collected inputs.
-    Handles the W field for SWP specially (keeps '%' strings as-is).
+    Resolve inputs to the correct types, then invoke the matching
+    calculator via the MCP server subprocess.
 
     Args:
         calc_key (str): One of "loan_tenure", "sip", "swp".
@@ -153,37 +161,63 @@ def _run_calculator(calc_key, inputs):
     Returns:
         str: The calculator result string or an error string.
     """
-    if calc_key == "loan_tenure":
-        return calculate_loan_tenure(
-            float(inputs["P"]),
-            float(inputs["E"]),
-            float(inputs["R"]),
-        )
+    tool_name = _TOOL_NAMES.get(calc_key)
+    if tool_name is None:
+        return "Error: Unknown calculator."
 
-    if calc_key == "sip":
-        return calculate_sip(
-            float(inputs["target"]),
-            float(inputs["R"]),
-            float(inputs["years"]),
-        )
-
-    if calc_key == "swp":
-        W = inputs["W"].strip()
-        if W.endswith("%"):
-            w_val = W
+    try:
+        if calc_key == "loan_tenure":
+            args = {
+                "P": float(inputs["P"]),
+                "E": float(inputs["E"]),
+                "R": float(inputs["R"]),
+            }
+        elif calc_key == "sip":
+            args = {
+                "target": float(inputs["target"]),
+                "R":      float(inputs["R"]),
+                "years":  float(inputs["years"]),
+            }
+        elif calc_key == "swp":
+            # W may be a percentage string — resolve to a float before the MCP call
+            # (the MCP server's inputSchema for W is number-only)
+            w_raw = inputs["W"].strip()
+            if w_raw.endswith("%"):
+                pct   = float(w_raw.rstrip("%"))
+                w_val = float(inputs["P"]) * pct / 100
+            else:
+                try:
+                    w_val = float(w_raw)
+                except ValueError:
+                    return "Error: Withdrawal amount must be a number or a percentage like '1%'."
+            args = {
+                "P":     float(inputs["P"]),
+                "years": float(inputs["years"]),
+                "R":     float(inputs["R"]),
+                "W":     w_val,
+            }
         else:
-            try:
-                w_val = float(W)
-            except ValueError:
-                return "Error: Withdrawal amount must be a number or a percentage like '1%'."
-        return calculate_swp(
-            float(inputs["P"]),
-            float(inputs["years"]),
-            float(inputs["R"]),
-            w_val,
-        )
+            return "Error: Unknown calculator."
 
-    return "Error: Unknown calculator."
+        return asyncio.run(_mcp_call(tool_name, args))
+
+    except Exception as e:
+        return f"Error: Calculator call failed. Details: {str(e)}"
+
+
+def _run_calculator(calc_key, inputs):
+    """
+    Delegate to the MCP client. Calculators are now invoked as MCP tools
+    via a stdio subprocess rather than direct function calls.
+
+    Args:
+        calc_key (str): One of "loan_tenure", "sip", "swp".
+        inputs   (dict): All collected inputs for this calculator.
+
+    Returns:
+        str: The calculator result string or an error string.
+    """
+    return _call_via_mcp(calc_key, inputs)
 
 
 def handle_message(user_message, session):
