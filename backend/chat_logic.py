@@ -102,9 +102,29 @@ def _detect_calculator(user_message):
                     or None if no keyword matched.
     """
     lowered = user_message.lower().lstrip()
-    # Conceptual questions go to LLM, not the calculator.
-    if any(lowered.startswith(p) for p in _QUESTION_STARTERS):
-        return None
+
+    starts_with_question_word = any(lowered.startswith(p) for p in _QUESTION_STARTERS)
+
+    if starts_with_question_word:
+        # Bypass to LLM only for pure conceptual questions with no calculation intent.
+        # Calculation intent is signalled by personal/quantitative markers:
+        #   "my"      → "what is my loan period"    → calculator
+        #   "how much"→ "how much SIP do I need?"   → calculator
+        # Without these markers:
+        #   "What is SIP?"             → LLM
+        #   "How does loan tenure work?"→ LLM
+        words = lowered.split()
+        has_calc_intent = (
+            "my" in words
+            or "how much" in lowered
+            or "how long" in lowered
+            or "how many" in lowered
+            or "i need" in lowered
+            or "i want" in lowered
+        )
+        if not has_calc_intent:
+            return None
+
     for calc_key, calc_def in CALCULATORS.items():
         for keyword in calc_def["trigger_keywords"]:
             if keyword in lowered:
