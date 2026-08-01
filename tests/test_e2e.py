@@ -1,7 +1,14 @@
 """Phase 7 — End-to-end test runner using Flask test client. No source files modified."""
 
 import json
+import os
 import sys
+
+# Ensure the project root is on sys.path so `import backend.*` resolves
+# correctly whether this file is run directly (`python tests/test_e2e.py`)
+# or via pytest (`python -m pytest tests/`).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import backend.app as app_module
 
 flask_app = app_module.app
