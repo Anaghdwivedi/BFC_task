@@ -1,9 +1,8 @@
-"""LLM interface for Gemini API."""
+"""LLM interface — Claude (Anthropic API)."""
 
 import os
 
-from google import genai
-from google.genai import types
+import anthropic
 
 _SYSTEM_PROMPT = (
     "You are a financial assistant. Your job is to help users with financial "
@@ -18,14 +17,14 @@ _SYSTEM_PROMPT = (
 
 def ask_llm(user_message, conversation_history):
     """
-    Send a message to Gemini and return its text reply.
+    Send a message to Claude and return its text reply.
 
     Args:
         user_message (str):
             The latest message typed by the user. Must be a non-empty string.
 
         conversation_history (list):
-            Prior turns in Gemini's native format. Each item is a dict:
+            Prior turns stored in Gemini-compatible format:
                 {"role": "user" | "model", "parts": [{"text": "..."}]}
             Pass an empty list [] if this is the first message.
             This list is NOT mutated — the caller owns it.
@@ -41,30 +40,31 @@ def ask_llm(user_message, conversation_history):
         return "Error: Conversation history must be a list."
 
     # --- API key ---
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key or not api_key.strip():
-        return "Error: GEMINI_API_KEY environment variable is not set."
+        return "Error: ANTHROPIC_API_KEY environment variable is not set."
 
-    # --- Build contents (do NOT mutate caller's list) ---
-    contents = conversation_history + [
-        {"role": "user", "parts": [{"text": user_message}]}
-    ]
+    # --- Convert history from internal format to Anthropic format ---
+    # Internal: {"role": "user"|"model", "parts": [{"text": "..."}]}
+    # Anthropic: {"role": "user"|"assistant", "content": "..."}
+    messages = []
+    for turn in conversation_history:
+        role = "assistant" if turn["role"] == "model" else turn["role"]
+        text = turn["parts"][0]["text"]
+        messages.append({"role": role, "content": text})
 
-    # --- Config ---
-    config = types.GenerateContentConfig(
-        system_instruction=_SYSTEM_PROMPT,
-        max_output_tokens=512,
-        temperature=0.3,
-    )
+    messages.append({"role": "user", "content": user_message})
 
     # --- API call ---
     try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=contents,
-            config=config,
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            temperature=0.3,
+            system=_SYSTEM_PROMPT,
+            messages=messages,
         )
-        return response.text
+        return response.content[0].text
     except Exception as e:
-        return f"Error: Could not get a response from Gemini. Details: {str(e)}"
+        return f"Error: Could not get a response from Claude. Details: {str(e)}"
